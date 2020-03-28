@@ -1,0 +1,68 @@
+pipeline {	
+    agent any
+		tools { 
+            angular 'angular-cli'
+            npm 'npm' 
+            
+        }
+
+        environment {
+        API_SERVER='http://localhost:9000'
+        }
+
+		stages {
+            stage('Connection_Gitlab') {
+                steps{          
+                retry(3){
+                    git url:'https://github.com/victor-tns/lazy-load-front.git',
+                    branch:'develop', 
+                    credentialsId:''
+                        }
+                    }
+                }	
+        		
+		stage ('Compilation_Maven') {		
+		    steps { 
+		        node ('Front'){
+                    sh "npm install"
+                    sh "ng build lazy-load-Front_Develop"
+                    }
+                }
+            }
+		
+		stage('Get-Compile') {			
+			steps {
+			    node ('Front') {		
+                    sh 'curl -u $ARTIFACTORY_USER:$ARTIFACTORY_APIKEY --data-binary $RELEASE_PACKAGE -X PUT $ARTIFACTORY_URL/artifactory/'
+        		}
+    		}
+		}
+
+        stage('Docker_Front') {
+            steps{
+                docker { image 'lazy-load'
+                sh "docker start && docker build -t lazy-load-Front-image"
+                sh "docker run -d lazy-load-Front-image"
+
+                 }
+            }
+        }
+			
+ 		stage ('Test_sonar')  {		
+		    steps {	
+		        withSonarQubeEnv('Sonar_New') {
+                    node('Front'){
+                        sh "cd /data/repositories/remote/lazy-load/lazy-load-Front_Develop && sonar:sonar " +
+                        "-Dsonar.projectKey=APP-lazy-load-Front_Develop " +
+                        "-Dsonar.projectName=APP-lazy-load-Front_Develop " +
+                        "-Dsonar.projectVersion=1.0 -Dsonar.sources=. -Dsonar.java.binaries=. " +
+                        "-Dsonar.sourceEncoding=ISO-8859-1 " +
+                        "-Dsonar.sonar.coverage.exclusions=**/*target/**,**/*pom.xml,**/*src_Test"
+                    }
+			    }
+			}					
+		}
+
+        stage()
+    }
+}

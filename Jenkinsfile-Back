@@ -1,0 +1,87 @@
+pipeline {	
+    agent any
+		tools { 
+            maven 'maven 3.5.3' 
+            jdk 'jdk8'
+        }
+
+        environment {
+        DB_HOST = 'ds029837.mlab.com'
+        DB_PORT = '29837'
+        DB_NAME = 'lazy_load_dev'
+        DB_USER = 'user'
+        DB_PASS = 'tnsPass0'
+    }
+
+		stages {
+            stage('Connection_Gitlab') {
+                steps{          
+                retry(3){
+                    git url:'https://github.com/victor-tns/lazy-load-.git',
+                    branch:'develop', 
+                    credentialsId:''
+                        }
+                    }
+                }	
+        		
+		stage ('Compilation_Maven') {		
+		    steps { 
+		        node ('maven 3.5.3'){
+                    sh "cd /data/repositories/remote/lazy-load/lazy-load_Develop && mvn -X test clean package -Dversion=1.0.0" 
+                    sh "java -jar build/libs/lazy-load-app-1.0.jar --spring.config.location=./application.yaml"
+                    }
+                }
+            }
+		
+		stage('Compress_ZIP') {			
+			steps {
+			    node ('maven 3.5.3') {		
+            		sh 'cd /data/repositories/remote/lazy-load/lazy-load_Develop/target/ && zip -u /data/repositories/remote/lazy-load/lazy-load_Develop/target/Artefactos.zip lazy-load-app-1.0.jar'
+        		}
+    		}
+		}
+
+        stage('Docker_BackEnd') {
+            steps{
+                docker { image 'maven:lazy-load'
+                sh "docker start && docker build -t lazy-load-image"
+                sh "docker $DB_HOST:$DB_PORT"
+                sh "docker run --name $DB_NAME -d lazy-load-image -p $DB_PORT:$DB_PORT"
+                 }
+            }
+        }
+			
+ 		stage ('Test_sonar')  {		
+		    steps {	
+		        withSonarQubeEnv('Sonar_New') {
+                    node('maven 3.5.3'){
+                        sh "cd /data/repositories/remote/lazy-load/lazy-load_Develop && sonar:sonar " +
+                        "-Dsonar.projectKey=APP-lazy-load_Develop " +
+                        "-Dsonar.projectName=APP-lazy-load_Develop " +
+                        "-Dsonar.projectVersion=1.0 -Dsonar.sources=. -Dsonar.java.binaries=. " +
+                        "-Dsonar.sourceEncoding=ISO-8859-1 " +
+                        "-Dsonar.sonar.coverage.exclusions=**/*target/**,**/*pom.xml,**/*src_Test"
+                    }
+			    }
+			}					
+		}
+							
+        stage('Publish_Artifactory') {
+           steps { 
+                node ('maven 3.5.3'){
+                    rtUpload (
+                        serverId: 'Artifactory',
+                        spec: '''{
+                            "files": [{
+                                "pattern": "/data/repositories/remote/lazy-load/lazy-load_Develop/target/Artefactos.zip",
+                                "target": "ART-lazy-load/Develop/${BUILD_ID}"
+                            }]
+                        }''',
+                    )
+                }
+            }
+        }
+
+        stage()
+    }
+}
